@@ -28,6 +28,9 @@ namespace RDBExplorer.Forms
                 if (archiveList.View != View.Details) e.DrawDefault = true;
             };
             archiveList.DrawSubItem += ArchiveList_DrawSubItem;
+            // Windows owns the ListView scrollbar; request its dark Explorer
+            // theme every time the native handle is created/recreated.
+            archiveList.HandleCreated += (_, _) => ThemeManager.ApplyNativeScrollTheme(archiveList);
             ThemeManager.Register(this);
             ApplyExplorerTheme();
         }
@@ -37,6 +40,7 @@ namespace RDBExplorer.Forms
             archiveList.OwnerDraw = ThemeManager.DarkEnabled;
             archiveList.GridLines = !ThemeManager.DarkEnabled;
             archiveList.Invalidate();
+            ThemeManager.ApplyNativeScrollTheme(archiveList);
             if (_contextMenu != null) ThemeManager.ApplyToStrip(_contextMenu);
             if (_containerPopup != null) ThemeManager.ApplyToStrip(_containerPopup);
         }

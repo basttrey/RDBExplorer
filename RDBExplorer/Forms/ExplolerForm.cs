@@ -52,6 +52,42 @@ namespace RDBExplorer.Forms
             archiveList.RetrieveVirtualItem += ArchiveList_RetrieveVirtualItem;
             archiveList.SelectedIndexChanged += ArchiveList_SelectedIndexChanged;
             archiveList.VirtualItemsSelectionRangeChanged += ArchiveList_VirtualItemsSelectionRangeChanged;
+            // The Hash column is the last column; use all remaining list width so
+            // the header/body never expose an unthemed strip to its right.
+            archiveList.Resize += (_, _) => FillHashColumn();
+            archiveList.ColumnWidthChanged += (_, _) => FillHashColumn();
+            archiveList.HandleCreated += (_, _) =>
+            {
+                if (!IsDisposed && IsHandleCreated)
+                    BeginInvoke(new Action(FillHashColumn));
+            };
+            Shown += (_, _) => FillHashColumn();
+        }
+
+        private bool _fillingHashColumn;
+
+        private void FillHashColumn()
+        {
+            if (_fillingHashColumn || !archiveList.IsHandleCreated ||
+                archiveList.Columns.Count < 5 || archiveList.ClientSize.Width <= 0)
+                return;
+
+            // ClientSize excludes the native vertical scrollbar when visible.
+            // When the other columns cannot fit, retain a readable minimum Hash
+            // width and allow normal horizontal scrolling instead of clipping.
+            int fixedWidth = 0;
+            for (int i = 0; i < archiveList.Columns.Count - 1; i++)
+                fixedWidth += archiveList.Columns[i].Width;
+
+            int target = Math.Max(100, archiveList.ClientSize.Width - fixedWidth);
+            ColumnHeader hash = archiveList.Columns[archiveList.Columns.Count - 1];
+            if (hash.Width == target) return;
+            try
+            {
+                _fillingHashColumn = true;
+                hash.Width = target;
+            }
+            finally { _fillingHashColumn = false; }
         }
 
         private void SetupContextMenu()
@@ -264,6 +300,10 @@ namespace RDBExplorer.Forms
                 ResetInlinePreview();
                 _filteredDisplayList = results;
                 archiveList.VirtualListSize = _filteredDisplayList.Count;
+                // Changing the row count can show/hide the vertical scrollbar,
+                // which changes the horizontal space available for Hash.
+                if (archiveList.IsHandleCreated)
+                    BeginInvoke(new Action(FillHashColumn));
                 archiveList.Invalidate();
                 QueueSelectedResourcePreview();
 
@@ -933,9 +973,10 @@ namespace RDBExplorer.Forms
         private void archiveList_KeyDown(object sender, KeyEventArgs e)
         {
             if (!e.Control && !e.Alt && !e.Shift &&
-                (e.KeyCode == Keys.Down || e.KeyCode == Keys.Right ||
-                 e.KeyCode == Keys.Up || e.KeyCode == Keys.Left) &&
-                NavigateInlinePreview(e.KeyCode == Keys.Down || e.KeyCode == Keys.Right ? 1 : -1))
+                ((e.KeyCode == Keys.Right && NavigateWithinSelectedG1T(1)) ||
+                 (e.KeyCode == Keys.Left && NavigateWithinSelectedG1T(-1)) ||
+                 (e.KeyCode == Keys.Down && NavigateInlineVertical(1)) ||
+                 (e.KeyCode == Keys.Up && NavigateInlineVertical(-1))))
             {
                 e.SuppressKeyPress = true;
                 e.Handled = true;

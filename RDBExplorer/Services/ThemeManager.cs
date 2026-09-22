@@ -123,7 +123,12 @@ namespace RDBExplorer.Services
                 grid.LineColor = Border;
             }
             if (control is ListView list)
+            {
+                ApplyNativeScrollTheme(list);
                 list.Invalidate();
+            }
+            if (control is ListBox box)
+                ApplyNativeScrollTheme(box);
             foreach (Control child in control.Controls)
                 PaintControl(child);
         }
@@ -142,6 +147,25 @@ namespace RDBExplorer.Services
                 if (item is ToolStripControlHost host)
                     PaintControl(host.Control);
             }
+        }
+
+        // WinForms does not expose a scrollbar color property for native ListView
+        // and ListBox controls. Ask Windows for its themed dark scrollbar, while
+        // restoring the normal Explorer theme when Dark Mode is disabled.
+        // Windows versions without this theme can keep their system scrollbars.
+        [DllImport("uxtheme.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+        private static extern int SetWindowTheme(IntPtr hwnd, string? subAppName, string? subIdList);
+
+        internal static void ApplyNativeScrollTheme(Control control)
+        {
+            if (!OperatingSystem.IsWindowsVersionAtLeast(10) || !control.IsHandleCreated)
+                return;
+            try
+            {
+                SetWindowTheme(control.Handle, DarkEnabled ? "DarkMode_Explorer" : "Explorer", null);
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
         }
 
         // Native Windows caption buttons should match the client-area theme.

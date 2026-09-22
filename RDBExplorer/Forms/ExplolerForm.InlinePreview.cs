@@ -12,6 +12,9 @@ namespace RDBExplorer.Forms
     {
         private SplitContainer? _previewSplit;
         private CheckBox? _browseTexturesCheck;
+        private CheckBox? _g1tOnlyNavigationCheck;
+        private Button? _previousTextureButton;
+        private Button? _nextTextureButton;
         private PictureBox? _inlinePicture;
         private Label? _inlineMessage;
         private Label? _inlineHeader;
@@ -23,7 +26,8 @@ namespace RDBExplorer.Forms
         private bool _selectLastOnLoad;
         private bool _internalSelectionChange;
         private bool _inlineLoadFailed;
-        private int _pendingTextureSteps;
+        private int _pendingTextureSteps; // Vertical, across textures and G1T files.
+        private int _pendingLocalTextureSteps; // Horizontal, inside the selected G1T only.
         private int _inlineTextureIndex;
         private RDBEntry? _queuedEntry;
         private RDBEntry? _loadedEntry;
@@ -131,23 +135,56 @@ namespace RDBExplorer.Forms
             };
             _browseTexturesCheck.CheckedChanged += (_, _) =>
             {
+                // Switching modes does not change the current image. The first/last
+                // texture is chosen only when the selected G1T resource changes.
                 _pendingTextureSteps = 0;
+                _pendingLocalTextureSteps = 0;
                 _selectLastOnLoad = false;
-                if (_inlineParser?.G1TFile.Textures.Count > 0)
-                {
-                    _inlineTextureIndex = 0;
-                    RequestInlineTexture();
-                }
+                UpdateInternalNavigationButtons();
                 archiveList.Focus();
             };
             toolbar.Controls.Add(_browseTexturesCheck);
 
-            Button prev = new Button { Text = "◀", Width = 30, Height = 27, Margin = new Padding(0, 3, 2, 0) };
-            Button next = new Button { Text = "▶", Width = 30, Height = 27, Margin = new Padding(0, 3, 2, 0) };
-            prev.Click += (_, _) => { NavigateInlinePreview(-1); archiveList.Focus(); };
-            next.Click += (_, _) => { NavigateInlinePreview(1); archiveList.Focus(); };
-            toolbar.Controls.Add(prev);
-            toolbar.Controls.Add(next);
+            // Off + Browse Textures off: normal ListView up/down (all file types).
+            // On + Browse Textures off: jump directly between G1T files.
+            // Browse Textures on: up/down traverse all textures across G1T files.
+            _g1tOnlyNavigationCheck = new CheckBox
+            {
+                Name = "G1TOnlyNavigationCheckBox",
+                Text = "G1T Only",
+                AutoSize = true,
+                Margin = new Padding(0, 7, 6, 2)
+            };
+            _g1tOnlyNavigationCheck.CheckedChanged += (_, _) => archiveList.Focus();
+            toolbar.Controls.Add(_g1tOnlyNavigationCheck);
+            var navigationTips = new ToolTip();
+            navigationTips.SetToolTip(_browseTexturesCheck,
+                "Up/Down: browse textures sequentially across G1T files. Off: jump between files when G1T Only is checked.");
+            navigationTips.SetToolTip(_g1tOnlyNavigationCheck,
+                "Skip non-G1T files with Up/Down. Uncheck both boxes for ordinary file-list navigation.");
+
+            _previousTextureButton = new Button
+            {
+                Name = "PreviousInternalTextureButton", Text = "◀", Width = 30, Height = 27,
+                Margin = new Padding(0, 3, 2, 0), Enabled = false
+            };
+            _nextTextureButton = new Button
+            {
+                Name = "NextInternalTextureButton", Text = "▶", Width = 30, Height = 27,
+                Margin = new Padding(0, 3, 2, 0), Enabled = false
+            };
+            _previousTextureButton.Click += (_, _) =>
+            {
+                NavigateWithinSelectedG1T(-1);
+                archiveList.Focus();
+            };
+            _nextTextureButton.Click += (_, _) =>
+            {
+                NavigateWithinSelectedG1T(1);
+                archiveList.Focus();
+            };
+            toolbar.Controls.Add(_previousTextureButton);
+            toolbar.Controls.Add(_nextTextureButton);
             right.Controls.Add(toolbar, 0, 1);
 
             var imageHost = new Panel { Name = "G1TPreviewCanvas", Dock = DockStyle.Fill, BackColor = Color.FromArgb(37, 37, 37) };
@@ -239,8 +276,10 @@ namespace RDBExplorer.Forms
             _inlineParser = null;
             _inlineLoadFailed = false;
             _pendingTextureSteps = 0;
+            _pendingLocalTextureSteps = 0;
             _selectLastOnLoad = false;
             _inlineTextureIndex = 0;
+            UpdateInternalNavigationButtons();
             if (_inlineHeader != null) _inlineHeader.Text = "G1T Preview";
             ShowInlineMessage("Select a G1T resource");
         }
@@ -274,7 +313,9 @@ namespace RDBExplorer.Forms
             _inlineLoadFailed = false;
             _inlineTextureIndex = 0;
             _selectLastOnLoad = selectLast;
+            _pendingLocalTextureSteps = 0;
             if (!preserveSteps) _pendingTextureSteps = 0;
+            UpdateInternalNavigationButtons();
 
             if (entry == null || _archiveExploler == null)
             {
@@ -328,6 +369,10 @@ namespace RDBExplorer.Forms
                     return;
                 }
                 _inlineTextureIndex = _selectLastOnLoad ? count - 1 : 0;
+                // A user can press Left/Right while this file is being loaded.
+                // Those presses never move to another file, even at the boundary.
+                _inlineTextureIndex = Math.Clamp(_inlineTextureIndex + _pendingLocalTextureSteps, 0, count - 1);
+                _pendingLocalTextureSteps = 0;
                 ResolvePendingNavigation();
             }
             catch (Exception ex)
@@ -335,6 +380,7 @@ namespace RDBExplorer.Forms
                 if (IsInlineRequestCurrent(version, entry))
                 {
                     _inlineLoadFailed = true;
+                    UpdateInternalNavigationButtons();
                     ShowInlineMessage("Preview failed", ex.Message);
                 }
             }
@@ -367,6 +413,7 @@ namespace RDBExplorer.Forms
                 requested = 0;
             }
             _inlineTextureIndex = requested;
+            UpdateInternalNavigationButtons();
             RequestInlineTexture();
         }
 
@@ -377,6 +424,7 @@ namespace RDBExplorer.Forms
             if (entry == null || parser == null || _inlineTextureIndex < 0 ||
                 _inlineTextureIndex >= parser.G1TFile.Textures.Count) return;
 
+            UpdateInternalNavigationButtons();
             long version = ++_inlineVersion;
             int textureIndex = _inlineTextureIndex;
             G1TTexture texture = parser.G1TFile.Textures[textureIndex];
@@ -431,36 +479,86 @@ namespace RDBExplorer.Forms
             }
         }
 
-        private bool NavigateInlinePreview(int direction)
+        private void UpdateInternalNavigationButtons()
         {
-            if (_archiveExploler == null || _filteredDisplayList.Count == 0) return false;
-            int current = archiveList.SelectedIndices.Count == 1 ? archiveList.SelectedIndices[0] : -1;
-            bool browse = _browseTexturesCheck?.Checked == true;
-            if (browse && current >= 0 && current < _filteredDisplayList.Count &&
-                IsG1TResource(_filteredDisplayList[current]) &&
-                ReferenceEquals(_queuedEntry, _filteredDisplayList[current]))
+            int count = _inlineParser?.G1TFile.Textures.Count ?? 0;
+            bool currentFileLoaded = _loadedEntry != null &&
+                ReferenceEquals(_loadedEntry, _queuedEntry) && !_inlineLoadFailed;
+            if (_previousTextureButton != null)
+                _previousTextureButton.Enabled = currentFileLoaded && count > 1 && _inlineTextureIndex > 0;
+            if (_nextTextureButton != null)
+                _nextTextureButton.Enabled = currentFileLoaded && count > 1 && _inlineTextureIndex < count - 1;
+        }
+
+        // Left/Right and preview buttons NEVER change the selected resource.
+        private bool NavigateWithinSelectedG1T(int direction)
+        {
+            int selectedIndex = archiveList.SelectedIndices.Count == 1 ? archiveList.SelectedIndices[0] : -1;
+            if (selectedIndex < 0 || selectedIndex >= _filteredDisplayList.Count)
+                return false;
+            RDBEntry entry = _filteredDisplayList[selectedIndex];
+            if (!IsG1TResource(entry)) return true; // No cross-file movement.
+
+            if (_inlineParser != null && ReferenceEquals(_loadedEntry, entry) &&
+                ReferenceEquals(_queuedEntry, entry))
             {
-                if (_inlineParser != null && ReferenceEquals(_loadedEntry, _queuedEntry))
+                int count = _inlineParser.G1TFile.Textures.Count;
+                if (count <= 1) return true;
+                int destination = Math.Clamp(_inlineTextureIndex + direction, 0, count - 1);
+                if (destination != _inlineTextureIndex)
                 {
-                    if (_inlineParser.G1TFile.Textures.Count == 0)
-                    {
-                        MoveToAdjacentG1T(direction, direction < 0);
-                        return true;
-                    }
-                    _pendingTextureSteps = direction;
-                    ResolvePendingNavigation();
-                    return true;
+                    _inlineTextureIndex = destination;
+                    RequestInlineTexture();
                 }
-                if (!_inlineLoadFailed)
-                {
-                    // A rapid keypress is queued rather than guessing how many images
-                    // an as-yet-unparsed resource contains.
-                    _pendingTextureSteps += direction;
-                    return true;
-                }
+                return true;
             }
-            MoveToAdjacentG1T(direction, direction < 0);
+            if (!_inlineLoadFailed && ReferenceEquals(_queuedEntry, entry))
+            {
+                _pendingLocalTextureSteps += direction;
+                return true;
+            }
             return true;
+        }
+
+        // Up/Down: ordinary ListView navigation with both options off, otherwise
+        // skip non-G1T files; Browse Textures adds sequential intra-file steps.
+        private bool NavigateInlineVertical(int direction)
+        {
+            bool browse = _browseTexturesCheck?.Checked == true;
+            bool onlyG1T = _g1tOnlyNavigationCheck?.Checked == true;
+            if (!browse && !onlyG1T) return false; // Let WinForms move one normal row.
+            if (_archiveExploler == null || _filteredDisplayList.Count == 0) return false;
+
+            int current = archiveList.SelectedIndices.Count == 1 ? archiveList.SelectedIndices[0] : -1;
+            if (!browse || current < 0 || current >= _filteredDisplayList.Count ||
+                !IsG1TResource(_filteredDisplayList[current]))
+            {
+                // Direct G1T navigation always enters a NEW file at Texture_000,
+                // even when going upwards.
+                return MoveToAdjacentG1T(direction, selectLast: false);
+            }
+
+            RDBEntry entry = _filteredDisplayList[current];
+            if (!ReferenceEquals(_queuedEntry, entry))
+            {
+                QueueSelectedResourcePreview();
+                return true;
+            }
+            if (_inlineParser != null && ReferenceEquals(_loadedEntry, entry))
+            {
+                int count = _inlineParser.G1TFile.Textures.Count;
+                if (count == 0) return MoveToAdjacentG1T(direction, selectLast: direction < 0);
+                _pendingTextureSteps = direction;
+                ResolvePendingNavigation();
+                return true;
+            }
+            if (!_inlineLoadFailed)
+            {
+                // Keep rapid vertical keypresses while the current G1T is parsed.
+                _pendingTextureSteps += direction;
+                return true;
+            }
+            return MoveToAdjacentG1T(direction, selectLast: direction < 0);
         }
 
         private bool MoveToAdjacentG1T(int direction, bool selectLast, bool preserveSteps = false)
