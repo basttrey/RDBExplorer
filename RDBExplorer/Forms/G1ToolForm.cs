@@ -1,4 +1,5 @@
-﻿using RDBExplorer.Core;
+﻿using RDBExplorer.Services;
+using RDBExplorer.Core;
 using RDBExplorer.Core.Formats.G1T;
 using RDBExplorer.Core.Models;
 using RDBExplorer.Utils;
@@ -12,11 +13,13 @@ namespace RDBExplorer.Forms
         private string _currentFilePath;
         private bool _isModified;
         private RDBEntry _rdbEntry;
+        private long _previewRequestVersion;
 
         public G1ToolForm()
         {
             InitializeComponent();
             SetupEvents();
+            ThemeManager.Register(this);
         }
 
         public G1ToolForm(string fileName, byte[] data, RDBEntry entry) : this()
@@ -128,6 +131,7 @@ namespace RDBExplorer.Forms
                 }
             }
 
+            ++_previewRequestVersion;
             textutePrewierPictureBox.Bitmap?.Dispose();
         }
 
@@ -147,7 +151,16 @@ namespace RDBExplorer.Forms
                         SetUIState(false);
                         toolStripStatusLabel.Text = "Importing DDS files...";
 
-                        await Task.Run(() => TextureConverter.ConvertDdsToG1T(_selectedTexture, path));
+                        // Import mutates mip data: never modify it while either preview is decoding.
+                        await TextureConverter.PreviewDecodeGate.WaitAsync();
+                        try
+                        {
+                            await Task.Run(() => TextureConverter.ConvertDdsToG1T(_selectedTexture, path));
+                        }
+                        finally
+                        {
+                            TextureConverter.PreviewDecodeGate.Release();
+                        }
 
                         if (textureListView.SelectedItems.Count > 0)
                         {
@@ -270,32 +283,58 @@ namespace RDBExplorer.Forms
 
         private async void UpdatePreview()
         {
-            if (_selectedTexture == null)
-                return;
-
+            // Snapshot all inputs BEFORE Task.Run. Never read mutable selection from a worker.
+            long request = ++_previewRequestVersion;
+            G1TTexture? texture = _selectedTexture;
             int mipIdx = mipsComboBox.SelectedIndex;
             int layerIdx = layersComboBox.SelectedIndex;
-            if (mipIdx < 0 || layerIdx < 0)
+            if (texture == null || mipIdx < 0 || mipIdx >= texture.MipMaps.Count || layerIdx < 0)
                 return;
 
-            toolStripStatusLabel.Text = "Decoding image...";
+            var mip = texture.MipMaps[mipIdx];
+            int width = (int)mip.Width;
+            int height = (int)mip.Height;
+            toolStripStatusLabel.Text = "Loading...";
 
-            Bitmap? bmp = await Task.Run(() =>
+            Bitmap? bitmap = null;
+            bool entered = false;
+            try
             {
-                byte[]? data = TextureConverter.DecodeG1t(_selectedTexture, mipIdx, layerIdx);
-                if (data == null)
-                    return null;
-                return TextureConverter.CreateBitmapFromRawData(data, (int)_selectedTexture.MipMaps[mipIdx].Width, (int)_selectedTexture.MipMaps[mipIdx].Height);
-            });
+                await TextureConverter.PreviewDecodeGate.WaitAsync();
+                entered = true;
+                if (request != _previewRequestVersion || IsDisposed)
+                    return;
 
-            if (bmp == null)
-            {
-                MessageBox.Show($"Unable to preview texture", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                bitmap = await Task.Run(() =>
+                {
+                    byte[]? raw = TextureConverter.DecodeG1t(texture, mipIdx, layerIdx);
+                    return raw == null ? null : TextureConverter.CreateBitmapFromRawData(raw, width, height);
+                });
+                if (request != _previewRequestVersion || IsDisposed)
+                    return;
+
+                if (bitmap == null)
+                {
+                    toolStripStatusLabel.Text = "Preview unavailable: unsupported format or decode failure.";
+                    return;
+                }
+                Bitmap? old = textutePrewierPictureBox.Bitmap;
+                textutePrewierPictureBox.Bitmap = bitmap;
+                bitmap = null; // The picture box owns the displayed bitmap now.
+                old?.Dispose();
+                toolStripStatusLabel.Text = "Ready";
             }
-            textutePrewierPictureBox.Bitmap?.Dispose();
-            textutePrewierPictureBox.Bitmap = bmp;
-            toolStripStatusLabel.Text = "Ready";
+            catch (Exception ex)
+            {
+                if (request == _previewRequestVersion && !IsDisposed)
+                    toolStripStatusLabel.Text = $"Preview failed: {ex.Message}";
+            }
+            finally
+            {
+                bitmap?.Dispose();
+                if (entered)
+                    TextureConverter.PreviewDecodeGate.Release();
+            }
         }
 
         private string GetCubeFaceName(int index)
@@ -480,9 +519,12 @@ namespace RDBExplorer.Forms
 
             try
             {
-                await Task.Run(() =>
+                await TextureConverter.PreviewDecodeGate.WaitAsync();
+                try
                 {
-                    foreach (ListViewItem item in textureListView.Items)
+                    await Task.Run(() =>
+                    {
+                        foreach (ListViewItem item in textureListView.Items)
                     {
                         var tex = (G1TTexture)item.Tag;
                         TextureConverter.ConvertDdsToG1T(tex, folderPath);
@@ -495,8 +537,13 @@ namespace RDBExplorer.Forms
                             item.SubItems[1].Text = $"{tex.Width}x{tex.Height} ({tex.Format})";
                             item.BackColor = Color.LightGreen;
                         }));
-                    }
-                });
+                        }
+                    });
+                }
+                finally
+                {
+                    TextureConverter.PreviewDecodeGate.Release();
+                }
 
                 UpdatePreview();
                 texrurePropertyGrid.Refresh();

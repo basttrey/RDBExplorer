@@ -30,6 +30,9 @@ namespace RDBExplorer.Forms
             InitializeComponent();
             SetupListView();
             SetupContextMenu();
+            SetupInlinePreview();
+            SetupContainerBrowser();
+            SetupDarkMode();
             archiveList.ColumnClick += ArchiveList_ColumnClick;
         }
 
@@ -47,6 +50,8 @@ namespace RDBExplorer.Forms
             archiveList.VirtualMode = true;
             archiveList.VirtualListSize = 0;
             archiveList.RetrieveVirtualItem += ArchiveList_RetrieveVirtualItem;
+            archiveList.SelectedIndexChanged += ArchiveList_SelectedIndexChanged;
+            archiveList.VirtualItemsSelectionRangeChanged += ArchiveList_VirtualItemsSelectionRangeChanged;
         }
 
         private void SetupContextMenu()
@@ -155,6 +160,7 @@ namespace RDBExplorer.Forms
             });
 
             archiveList.Invalidate();
+            QueueSelectedResourcePreview();
         }
 
         private void ArchiveList_RetrieveVirtualItem(object sender, RetrieveVirtualItemEventArgs e)
@@ -186,6 +192,7 @@ namespace RDBExplorer.Forms
                 ofd.Filter = "RDB Files|*.rdb";
                 if (ofd.ShowDialog() == DialogResult.OK)
                 {
+                    ResetInlinePreview();
                     toolStripStatusLabel.Text = "Loading RDB and RDX index...";
 
                     await Task.Run(() =>
@@ -205,7 +212,8 @@ namespace RDBExplorer.Forms
                     generateModelDatabaseToolStripMenuItem.Enabled = true;
 
                     PopulateTypeFilter();
-                    ShowFiles();
+                    PopulateContainerBrowser();
+                    ShowFiles(filterBox.Text);
                 }
             }
         }
@@ -221,7 +229,9 @@ namespace RDBExplorer.Forms
 
             toolStripStatusLabel.Text = "Filtering...";
 
-            var search = filter.ToLower().Trim();
+            var search = filter.Trim();
+            var selectedContainer = _selectedContainerPath;
+            var archive = _archiveExploler;
             var checkedTypes = new HashSet<string>(typeFilterComboBox.CheckedItems.Cast<string>());
             bool hasTypeFilter = checkedTypes.Count > 0;
             bool hasTextFilter = !string.IsNullOrEmpty(search);
@@ -230,7 +240,9 @@ namespace RDBExplorer.Forms
             {
                 var results = await Task.Run(() =>
                 {
-                    IEnumerable<RDBEntry> query = _archiveExploler.RDBEntries;
+                    IEnumerable<RDBEntry> query = archive.RDBEntries;
+                    if (selectedContainer != null)
+                        query = query.Where(e => string.Equals(e.Location?.ContainerPath, selectedContainer, StringComparison.OrdinalIgnoreCase));
                     if (hasTypeFilter)
                     {
                         query = query.Where(e => checkedTypes.Contains(e.TypeName ?? "Unknown"));
@@ -240,6 +252,7 @@ namespace RDBExplorer.Forms
                         query = query.Where(entry =>
                             (entry.Name != null && entry.Name.Contains(search, StringComparison.OrdinalIgnoreCase)) ||
                             (entry.TypeName != null && entry.TypeName.Contains(search, StringComparison.OrdinalIgnoreCase)) ||
+                            (entry.Location?.ContainerPath?.Contains(search, StringComparison.OrdinalIgnoreCase) == true) ||
                             $"0x{entry.FileKtid:X8}".Contains(search, StringComparison.OrdinalIgnoreCase)
                         );
                     }
@@ -247,9 +260,12 @@ namespace RDBExplorer.Forms
                     return query.ToList();
                 }, token);
 
+                token.ThrowIfCancellationRequested();
+                ResetInlinePreview();
                 _filteredDisplayList = results;
                 archiveList.VirtualListSize = _filteredDisplayList.Count;
                 archiveList.Invalidate();
+                QueueSelectedResourcePreview();
 
                 toolStripStatusLabel.Text = $"Files shown: {_filteredDisplayList.Count} / Total: {_archiveExploler.RDBEntries.Count}";
             }
@@ -916,6 +932,15 @@ namespace RDBExplorer.Forms
 
         private void archiveList_KeyDown(object sender, KeyEventArgs e)
         {
+            if (!e.Control && !e.Alt && !e.Shift &&
+                (e.KeyCode == Keys.Down || e.KeyCode == Keys.Right ||
+                 e.KeyCode == Keys.Up || e.KeyCode == Keys.Left) &&
+                NavigateInlinePreview(e.KeyCode == Keys.Down || e.KeyCode == Keys.Right ? 1 : -1))
+            {
+                e.SuppressKeyPress = true;
+                e.Handled = true;
+                return;
+            }
             if (e.Control && e.KeyCode == Keys.A)
             {
                 SelectAllItems();

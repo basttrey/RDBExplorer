@@ -226,8 +226,8 @@
             tableLayoutPanel1.ColumnCount = 2;
             tableLayoutPanel1.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62.5F));
             tableLayoutPanel1.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 37.5F));
-            tableLayoutPanel1.Controls.Add(archiveList, 1, 0);
-            tableLayoutPanel1.Controls.Add(toolStripStatusLabel, 1, 1);
+            tableLayoutPanel1.Controls.Add(archiveList, 0, 1);
+            tableLayoutPanel1.Controls.Add(toolStripStatusLabel, 0, 2);
             tableLayoutPanel1.Controls.Add(progressBarOperation, 1, 2);
             tableLayoutPanel1.Controls.Add(typeFilterComboBox, 1, 0);
             tableLayoutPanel1.Controls.Add(filterBox, 0, 0);
@@ -235,9 +235,9 @@
             tableLayoutPanel1.Location = new Point(0, 28);
             tableLayoutPanel1.Name = "tableLayoutPanel1";
             tableLayoutPanel1.RowCount = 3;
-            tableLayoutPanel1.RowStyles.Add(new RowStyle());
+            tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
             tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            tableLayoutPanel1.RowStyles.Add(new RowStyle());
+            tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
             tableLayoutPanel1.Size = new Size(882, 525);
             tableLayoutPanel1.TabIndex = 1;
             // 

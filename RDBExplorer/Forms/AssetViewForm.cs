@@ -22,6 +22,7 @@ namespace RDBExplorer.Forms
         public AssetViewForm()
         {
             InitializeComponent();
+            ThemeManager.Register(this);
         }
 
         public AssetViewForm(RDBEntry entry, byte[] data, ArchiveExploler exploler) : this()

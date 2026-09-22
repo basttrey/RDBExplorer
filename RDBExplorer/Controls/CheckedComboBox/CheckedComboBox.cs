@@ -301,6 +301,17 @@ namespace RDBExplorer.Controls.CheckedComboBox
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
         public event ItemCheckEventHandler ItemCheck;
 
+        // The drop-down is a separate Form, not a child of the main Form.
+        // Recolor it explicitly when the application theme changes.
+        public void ApplyDropdownTheme(Color background, Color text)
+        {
+            _dropdown.BackColor = background;
+            _dropdown.ForeColor = text;
+            _dropdown.List.BackColor = background;
+            _dropdown.List.ForeColor = text;
+            _dropdown.List.Invalidate();
+        }
+
         public CheckedComboBox()
         {
             // We want to do the drawing of the dropdown.

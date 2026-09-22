@@ -8,6 +8,7 @@ namespace RDBExplorer.Forms
         {
             InitializeComponent();
             LoadSettings();
+            ThemeManager.Register(this);
         }
 
         private void LoadSettings()

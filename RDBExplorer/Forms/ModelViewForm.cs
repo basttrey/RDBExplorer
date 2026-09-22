@@ -25,6 +25,7 @@ namespace RDBExplorer.Forms
             this.Controls.Add(ModelViewer);
             this.menuStrip1.SendToBack();
             ModelViewer.BringToFront();
+            ThemeManager.Register(this);
         }
 
 

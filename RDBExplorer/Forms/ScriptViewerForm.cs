@@ -1,4 +1,5 @@
-﻿using RDBExplorer.Core.Formats.Bytecode;
+﻿using RDBExplorer.Services;
+using RDBExplorer.Core.Formats.Bytecode;
 using System.Text;
 
 namespace RDBExplorer.Forms
@@ -15,6 +16,7 @@ namespace RDBExplorer.Forms
         public ScriptViewerForm()
         {
             InitializeComponent();
+            ThemeManager.Register(this);
         }
 
         private async void openToolStripMenuItem_Click(object sender, EventArgs e)

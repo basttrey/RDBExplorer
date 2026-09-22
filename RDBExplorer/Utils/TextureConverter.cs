@@ -11,6 +11,9 @@ namespace RDBExplorer.Utils
 {
     public class TextureConverter
     {
+        // Shared by inline preview and G1Tool: native decoders never run two previews concurrently.
+        public static readonly SemaphoreSlim PreviewDecodeGate = new(1, 1);
+
         /// <summary>
         /// Сonverts 8-bit Alpha (A8) to 32-bit RGBA8.
         ///  R, G, B channels are set to 255.
@@ -170,22 +173,35 @@ namespace RDBExplorer.Utils
 
         public static Bitmap CreateBitmapFromRawData(byte[] rawData, int width, int height)
         {
+            // Validate before allocating/locking a bitmap; a mismatch must never leak a GDI handle.
+            if (width <= 0 || height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(width), "Invalid texture dimensions.");
+            int expectedBytes = checked(width * height * 4);
+            if (rawData.Length != expectedBytes)
+                throw new InvalidOperationException($"Decoded data size mismatch: got {rawData.Length}, expected {expectedBytes} ({width}x{height}).");
+
             var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-            var bmpData = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, bmp.PixelFormat);
             try
             {
-                int targetBytes = bmpData.Stride * bmpData.Height;
-                if (rawData.Length != width * height * 4)
+                var bmpData = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, bmp.PixelFormat);
+                try
                 {
-                    throw new InvalidOperationException($"Decoded data size mismatch: got {rawData.Length}, expected {width * height * 4} (stride*height={targetBytes}).");
+                    int targetBytes = checked(bmpData.Stride * bmpData.Height);
+                    if (targetBytes != expectedBytes)
+                        throw new InvalidOperationException($"Unexpected bitmap stride: {targetBytes} vs {expectedBytes}.");
+                    Marshal.Copy(rawData, 0, bmpData.Scan0, expectedBytes);
                 }
-                Marshal.Copy(rawData, 0, bmpData.Scan0, Math.Min(rawData.Length, targetBytes));
+                finally
+                {
+                    bmp.UnlockBits(bmpData);
+                }
+                return bmp;
             }
-            finally
+            catch
             {
-                bmp.UnlockBits(bmpData);
+                bmp.Dispose();
+                throw;
             }
-            return bmp;
         }
 
         public static void SaveImage(G1TTexture tex, int mipIdx, int layerIdx, string filePath)
