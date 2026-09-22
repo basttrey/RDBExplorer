@@ -92,7 +92,13 @@ namespace RDBExplorer.Forms
             textHost.Controls.Add(_containerSearch);
             _containerPicker.Controls.Add(textHost);
             _containerPicker.Controls.Add(_containerArrow);
-            _containerSearch.Enter += (_, _) => _containerSearch.SelectAll();
+            // Select the current choice for a fresh search, but not when focus
+            // returns from the results popup in the middle of typing.
+            _containerSearch.Enter += (_, _) =>
+            {
+                if (_containerPopup?.Visible != true)
+                    _containerSearch.SelectAll();
+            };
             _containerSearch.TextChanged += (_, _) =>
             {
                 if (!_updatingContainerText)
@@ -144,7 +150,7 @@ namespace RDBExplorer.Forms
             };
             _containerPopup = new ToolStripDropDown
             {
-                AutoClose = true,
+                AutoClose = false,
                 AutoSize = false,
                 Padding = new Padding(1),
                 Margin = Padding.Empty
@@ -155,6 +161,12 @@ namespace RDBExplorer.Forms
                 if (!IsDisposed && _containerSearch is { IsDisposed: false })
                     RestoreContainerSelectionText();
             };
+            // Close and restore the selected container when the user moves to another
+            // resource control; leave the popup open while typing in the search box.
+            archiveList.MouseDown += (_, _) => _containerPopup?.Close();
+            filterBox.MouseDown += (_, _) => _containerPopup?.Close();
+            typeFilterComboBox.MouseDown += (_, _) => _containerPopup?.Close();
+            menuStrip1.MouseDown += (_, _) => _containerPopup?.Close();
             FormClosed += (_, _) => _containerPopup.Dispose();
         }
 
@@ -219,7 +231,12 @@ namespace RDBExplorer.Forms
                 host.Size = _containerResults.Size;
             _containerPopup.Size = new Size(popupWidth, popupHeight);
             if (!_containerPopup.Visible)
+            {
                 _containerPopup.Show(_containerPicker, new Point(0, _containerPicker.Height));
+                // A ToolStripDropDown can claim keyboard focus when first shown.
+                // Give focus back to the main-form TextBox so letters are not lost.
+                _containerSearch?.Focus();
+            }
         }
 
         private void ContainerSearch_KeyDown(object? sender, KeyEventArgs e)
